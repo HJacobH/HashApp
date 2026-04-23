@@ -6,21 +6,20 @@ using System.Threading.Tasks;
 
 namespace SemC
 {
-    public class Block
+    public class Block<TKey, TValue>
     {
         public int Address { get; set; }
         public int NextBlockAddress { get; set; } = -1;
-        public List<Record> Records { get; set; }
+        public List<HashRecord<TKey, TValue>> Records { get; set; }
         public int Capacity { get; private set; }
 
         public Block(int address, int capacity)
         {
             Address = address;
             Capacity = capacity;
-            Records = new List<Record>(capacity);
+            Records = new List<HashRecord<TKey, TValue>>(capacity);
         }
 
         public bool IsFull => Records.Count >= Capacity;
-        public bool IsEmpty => Records.Count == 0;
     }
 }

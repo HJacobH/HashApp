@@ -6,75 +6,73 @@ using System.Threading.Tasks;
 
 namespace SemC
 {
-    public class StaticHashFile
+    public class StaticHashFile<TKey, TValue>
     {
-        private Dictionary<int, Block> _storage = new Dictionary<int, Block>();
+        private Dictionary<int, Block<TKey, TValue>> _storage = new Dictionary<int, Block<TKey, TValue>>();
 
-        private int _primaryBlocksCount;
-        private int _blockingFactor;
+        private readonly int _primaryBlocksCount;
+        private readonly int _blockingFactor;
         private int _nextOverflowAddress;
+
+        private readonly Func<TKey, int, int> _hashFunction;
 
         public int ReadCount { get; private set; }
         public int WriteCount { get; private set; }
 
-        public StaticHashFile(int primaryBlocksCount, int blockingFactor)
+        public StaticHashFile(int primaryBlocksCount, int blockingFactor, Func<TKey, int, int> hashFunction)
         {
             _primaryBlocksCount = primaryBlocksCount;
             _blockingFactor = blockingFactor;
-            _nextOverflowAddress = primaryBlocksCount; 
+            _nextOverflowAddress = primaryBlocksCount;
+            _hashFunction = hashFunction ?? throw new ArgumentNullException(nameof(hashFunction));
 
             for (int i = 0; i < primaryBlocksCount; i++)
             {
-                WriteBlock(new Block(i, blockingFactor));
+                WriteBlock(new Block<TKey, TValue>(i, blockingFactor));
             }
         }
 
-        private Block ReadBlock(int address)
+        private Block<TKey, TValue> ReadBlock(int address)
         {
             ReadCount++;
             return _storage.ContainsKey(address) ? _storage[address] : null;
         }
 
-        private void WriteBlock(Block block)
+        private void WriteBlock(Block<TKey, TValue> block)
         {
             WriteCount++;
             _storage[block.Address] = block;
         }
 
-        private int GetHash(string key)
+        private int GetHash(TKey key)
         {
-            int hash = 0;
-            foreach (char c in key)
-            {
-                hash = (hash * 31 + c) % _primaryBlocksCount;
-            }
-            return Math.Abs(hash);
+            return _hashFunction(key, _primaryBlocksCount);
         }
 
-        public bool Insert(Record record)
+        public bool Insert(TKey key, TValue value)
         {
-            if (Search(record.Name) != null) return false; 
+            if (Search(key) != null) return false;
 
-            int address = GetHash(record.Name);
-            Block currentBlock = ReadBlock(address);
+            int address = GetHash(key);
+            Block<TKey, TValue> currentBlock = ReadBlock(address);
 
             while (true)
             {
                 if (!currentBlock.IsFull)
                 {
-                    currentBlock.Records.Add(record);
+                    currentBlock.Records.Add(new HashRecord<TKey, TValue>(key, value));
                     WriteBlock(currentBlock);
                     return true;
                 }
 
                 if (currentBlock.NextBlockAddress == -1)
                 {
-                    Block newOverflowBlock = new Block(_nextOverflowAddress++, _blockingFactor);
+                    Block<TKey, TValue> newOverflowBlock = new Block<TKey, TValue>(_nextOverflowAddress++, _blockingFactor);
                     currentBlock.NextBlockAddress = newOverflowBlock.Address;
-                    WriteBlock(currentBlock); 
+                    WriteBlock(currentBlock);
 
-                    newOverflowBlock.Records.Add(record);
-                    WriteBlock(newOverflowBlock); 
+                    newOverflowBlock.Records.Add(new HashRecord<TKey, TValue>(key, value));
+                    WriteBlock(newOverflowBlock);
                     return true;
                 }
                 else
@@ -84,14 +82,14 @@ namespace SemC
             }
         }
 
-        public Record Search(string key)
+        public HashRecord<TKey, TValue> Search(TKey key)
         {
             int address = GetHash(key);
-            Block currentBlock = ReadBlock(address);
+            Block<TKey, TValue> currentBlock = ReadBlock(address);
 
             while (currentBlock != null)
             {
-                var record = currentBlock.Records.FirstOrDefault(r => r.Name == key);
+                var record = currentBlock.Records.FirstOrDefault(r => EqualityComparer<TKey>.Default.Equals(r.Key, key));
                 if (record != null) return record;
 
                 if (currentBlock.NextBlockAddress == -1) break;
@@ -100,14 +98,14 @@ namespace SemC
             return null;
         }
 
-        public bool Delete(string key)
+        public bool Delete(TKey key)
         {
             int address = GetHash(key);
-            Block currentBlock = ReadBlock(address);
+            Block<TKey, TValue> currentBlock = ReadBlock(address);
 
             while (currentBlock != null)
             {
-                var record = currentBlock.Records.FirstOrDefault(r => r.Name == key);
+                var record = currentBlock.Records.FirstOrDefault(r => EqualityComparer<TKey>.Default.Equals(r.Key, key));
                 if (record != null)
                 {
                     currentBlock.Records.Remove(record);
@@ -121,12 +119,12 @@ namespace SemC
             return false;
         }
 
-        public List<Record> GetAllRecords()
+        public List<HashRecord<TKey, TValue>> GetAllRecords()
         {
-            List<Record> allRecords = new List<Record>();
+            List<HashRecord<TKey, TValue>> allRecords = new List<HashRecord<TKey, TValue>>();
             for (int i = 0; i < _primaryBlocksCount; i++)
             {
-                Block currentBlock = ReadBlock(i);
+                Block<TKey, TValue> currentBlock = ReadBlock(i);
                 while (currentBlock != null)
                 {
                     allRecords.AddRange(currentBlock.Records);

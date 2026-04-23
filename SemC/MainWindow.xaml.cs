@@ -12,17 +12,26 @@ using System.Windows.Shapes;
 
 namespace SemC
 {
-    /// <summary>
-    /// Interaction logic for MainWindow.xaml
-    /// </summary>
     public partial class MainWindow : Window
     {
-        private StaticHashFile _hashFile;
+        private StaticHashFile<string, ObecData> _hashFile;
 
         public MainWindow()
         {
             InitializeComponent();
-            _hashFile = new StaticHashFile(2500, 5);
+
+            _hashFile = new StaticHashFile<string, ObecData>(
+                primaryBlocksCount: 2500,
+                blockingFactor: 5,
+                hashFunction: (key, blockCount) =>
+                {
+                    int hash = 0;
+                    foreach (char c in key)
+                    {
+                        hash = (hash * 31 + c) % blockCount;
+                    }
+                    return Math.Abs(hash);
+                });
         }
 
         private void UpdateStats()
@@ -32,19 +41,19 @@ namespace SemC
 
         private void BtnInsert_Click(object sender, RoutedEventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(txtName.Text)) return;
+            string name = txtName.Text.Trim();
+            if (string.IsNullOrWhiteSpace(name)) return;
 
-            var record = new Record
+            var data = new ObecData
             {
-                Name = txtName.Text.Trim(),
                 Population = int.TryParse(txtPop.Text, out int pop) ? pop : 0,
                 Area = double.TryParse(txtArea.Text, out double area) ? area : 0
             };
 
             _hashFile.ResetIOStats();
-            bool success = _hashFile.Insert(record);
+            bool success = _hashFile.Insert(name, data);
 
-            lstOutput.Items.Insert(0, success ? $"Vloženo: {record}" : $"Chyba: Obec {record.Name} již existuje.");
+            lstOutput.Items.Insert(0, success ? $"Vloženo: {name} ({data})" : $"Chyba: Obec {name} již existuje.");
             UpdateStats();
         }
 
@@ -57,7 +66,7 @@ namespace SemC
             var record = _hashFile.Search(key);
 
             if (record != null)
-                lstOutput.Items.Insert(0, $"Nalezeno: {record}");
+                lstOutput.Items.Insert(0, $"Nalezeno: {record.Key} - {record.Value}");
             else
                 lstOutput.Items.Insert(0, $"Nenalezeno: Obec '{key}' neexistuje.");
 
@@ -87,14 +96,13 @@ namespace SemC
             while (count < 10000)
             {
                 string name = $"Obec_{Guid.NewGuid().ToString().Substring(0, 8)}";
-                var record = new Record
+                var data = new ObecData
                 {
-                    Name = name,
                     Population = rnd.Next(100, 50000),
                     Area = Math.Round(rnd.NextDouble() * 100 + 1, 2)
                 };
 
-                if (_hashFile.Insert(record))
+                if (_hashFile.Insert(name, data))
                 {
                     count++;
                 }
@@ -115,7 +123,7 @@ namespace SemC
 
             foreach (var r in allRecords)
             {
-                lstOutput.Items.Add(r.ToString());
+                lstOutput.Items.Add($"{r.Key} ({r.Value})");
             }
 
             lstOutput.Items.Insert(0, $"--- VÝPIS {allRecords.Count} ZÁZNAMŮ (Doba: {sw.ElapsedMilliseconds} ms) ---");
