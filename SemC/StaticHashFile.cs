@@ -1,14 +1,19 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
+using System.Windows;
 
 namespace SemC
 {
     public class StaticHashFile<TKey, TValue>
     {
-        private Dictionary<int, Block<TKey, TValue>> _storage = new Dictionary<int, Block<TKey, TValue>>();
+        private readonly FileStream _diskFile;
+        private readonly string _filePath = "databaze_obci.bin"; 
+        private readonly int _blockSizeInBytes = 4096;
 
         private readonly int _primaryBlocksCount;
         private readonly int _blockingFactor;
@@ -16,32 +21,106 @@ namespace SemC
 
         private readonly Func<TKey, int, int> _hashFunction;
 
+        private readonly Action<BinaryWriter, HashRecord<TKey, TValue>> _serializeRecord;
+        private readonly Func<BinaryReader, HashRecord<TKey, TValue>> _deserializeRecord;
+
         public int ReadCount { get; private set; }
         public int WriteCount { get; private set; }
 
-        public StaticHashFile(int primaryBlocksCount, int blockingFactor, Func<TKey, int, int> hashFunction)
+        public StaticHashFile(
+            int primaryBlocksCount,
+            int blockingFactor,
+            Func<TKey, int, int> hashFunction,
+            Action<BinaryWriter, HashRecord<TKey, TValue>> serializeRecord,
+            Func<BinaryReader, HashRecord<TKey, TValue>> deserializeRecord)
         {
             _primaryBlocksCount = primaryBlocksCount;
             _blockingFactor = blockingFactor;
             _nextOverflowAddress = primaryBlocksCount;
-            _hashFunction = hashFunction ?? throw new ArgumentNullException(nameof(hashFunction));
+            _hashFunction = hashFunction;
+            _serializeRecord = serializeRecord;
+            _deserializeRecord = deserializeRecord;
 
-            for (int i = 0; i < primaryBlocksCount; i++)
+            _diskFile = new FileStream(_filePath, FileMode.OpenOrCreate, FileAccess.ReadWrite);
+
+            if (_diskFile.Length == 0)
             {
-                WriteBlock(new Block<TKey, TValue>(i, blockingFactor));
+                for (int i = 0; i < primaryBlocksCount; i++)
+                {
+                    WriteBlock(new Block<TKey, TValue>(i, blockingFactor));
+                }
+            }
+            else
+            {
+                _nextOverflowAddress = (int)(_diskFile.Length / _blockSizeInBytes);
             }
         }
 
         private Block<TKey, TValue> ReadBlock(int address)
         {
             ReadCount++;
-            return _storage.ContainsKey(address) ? _storage[address] : null;
+            long offset = (long)address * _blockSizeInBytes;
+
+            if (offset >= _diskFile.Length) return null;
+
+            _diskFile.Seek(offset, SeekOrigin.Begin);
+
+            byte[] buffer = new byte[_blockSizeInBytes];
+            _diskFile.Read(buffer, 0, _blockSizeInBytes);
+
+            using (MemoryStream ms = new MemoryStream(buffer))
+            using (BinaryReader reader = new BinaryReader(ms))
+            {
+                int readAddress = reader.ReadInt32();
+
+                if (readAddress != address) return null;
+
+                Block<TKey, TValue> block = new Block<TKey, TValue>(readAddress, _blockingFactor);
+                block.NextBlockAddress = reader.ReadInt32();
+
+                int recordCount = reader.ReadInt32();
+                for (int i = 0; i < recordCount; i++)
+                {
+                    block.Records.Add(_deserializeRecord(reader));
+                }
+
+                return block;
+            }
         }
 
         private void WriteBlock(Block<TKey, TValue> block)
         {
             WriteCount++;
-            _storage[block.Address] = block;
+            long offset = (long)block.Address * _blockSizeInBytes;
+
+            byte[] buffer = new byte[_blockSizeInBytes];
+
+            using (MemoryStream ms = new MemoryStream(buffer))
+            using (BinaryWriter writer = new BinaryWriter(ms))
+            {
+                writer.Write(block.Address);              
+                writer.Write(block.NextBlockAddress);     
+                writer.Write(block.Records.Count);        
+
+                foreach (var record in block.Records)
+                {
+                    _serializeRecord(writer, record);     
+                }
+
+                if (ms.Position > _blockSizeInBytes)
+                {
+                    throw new InvalidOperationException("Kritická chyba: Záznamy se nevejdou do velikosti bloku!");
+                }
+            }
+
+            _diskFile.Seek(offset, SeekOrigin.Begin);
+            _diskFile.Write(buffer, 0, _blockSizeInBytes);
+            _diskFile.Flush();
+        }
+
+        public void Dispose()
+        {
+            _diskFile?.Dispose();
         }
 
         private int GetHash(TKey key)

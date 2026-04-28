@@ -1,17 +1,11 @@
-﻿using System.Diagnostics;
+﻿using System;
+using System.Diagnostics;
 using System.Text;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 
 namespace SemC
 {
+
     public partial class MainWindow : Window
     {
         private StaticHashFile<string, ObecData> _hashFile;
@@ -31,7 +25,30 @@ namespace SemC
                         hash = (hash * 31 + c) % blockCount;
                     }
                     return Math.Abs(hash);
-                });
+                },
+
+                serializeRecord: (writer, record) =>
+                {
+                    writer.Write(record.Key); 
+                    writer.Write(record.Value.Population); 
+                    writer.Write(record.Value.Area);       
+                },
+
+                deserializeRecord: (reader) =>
+                {
+                    string key = reader.ReadString();
+                    int pop = reader.ReadInt32();
+                    double area = reader.ReadDouble();
+
+                    return new HashRecord<string, ObecData>(key, new ObecData { Population = pop, Area = area });
+                }
+            );
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            _hashFile?.Dispose();
+            base.OnClosed(e);
         }
 
         private void UpdateStats()
@@ -55,6 +72,11 @@ namespace SemC
 
             lstOutput.Items.Insert(0, success ? $"Vloženo: {name} ({data})" : $"Chyba: Obec {name} již existuje.");
             UpdateStats();
+            
+            if (success)
+            {
+                txtName.Clear(); txtPop.Clear(); txtArea.Clear();
+            }
         }
 
         private void BtnSearch_Click(object sender, RoutedEventArgs e)
@@ -87,11 +109,12 @@ namespace SemC
 
         private void BtnGenerate_Click(object sender, RoutedEventArgs e)
         {
-            lstOutput.Items.Insert(0, "Generuji 10 000 unikátních záznamů...");
+            lstOutput.Items.Insert(0, "Generuji 10 000 unikátních záznamů a zapisuji na disk...");
             _hashFile.ResetIOStats();
 
             Random rnd = new Random();
             int count = 0;
+            Stopwatch sw = Stopwatch.StartNew();
 
             while (count < 10000)
             {
@@ -108,7 +131,8 @@ namespace SemC
                 }
             }
 
-            lstOutput.Items.Insert(0, "Generování dokončeno.");
+            sw.Stop();
+            lstOutput.Items.Insert(0, $"Generování dokončeno za {sw.ElapsedMilliseconds} ms.");
             UpdateStats();
         }
 
@@ -126,7 +150,7 @@ namespace SemC
                 lstOutput.Items.Add($"{r.Key} ({r.Value})");
             }
 
-            lstOutput.Items.Insert(0, $"--- VÝPIS {allRecords.Count} ZÁZNAMŮ (Doba: {sw.ElapsedMilliseconds} ms) ---");
+            lstOutput.Items.Insert(0, $"--- VÝPIS {allRecords.Count} ZÁZNAMŮ (Doba načtení z disku: {sw.ElapsedMilliseconds} ms) ---");
             UpdateStats();
         }
     }
